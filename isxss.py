@@ -78,11 +78,6 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
     
     def updateTable(self):
         self.tableModel.setDataVector(self.data, ['ID', 'Method', 'URL' ,'XSS'])
-        self.myTable.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
-        self.myTable.columnModel.getColumn(0).preferredWidth = 10
-        self.myTable.columnModel.getColumn(1).preferredWidth = 10
-        self.myTable.columnModel.getColumn(2).preferredWidth = 550
-        self.myTable.columnModel.getColumn(3).preferredWidth = 50
     
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
@@ -158,11 +153,11 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                         reflected = []
                         if "xxxx1'" in self._helpers.bytesToString(response_body):
                             reflected.append("'")
-                        elif "xxxx2\"" in self._helpers.bytesToString(response_body):
+                        if "xxxx2\"" in self._helpers.bytesToString(response_body):
                             reflected.append("\"")
-                        elif "xxxx3>" in self._helpers.bytesToString(response_body):
+                        if "xxxx3>" in self._helpers.bytesToString(response_body):
                             reflected.append(">")
-                        elif "xxxx4<" in self._helpers.bytesToString(response_body):
+                        if "xxxx4<" in self._helpers.bytesToString(response_body):
                             reflected.append("<")
                         
                         # self.data.append([self.id, new_request_data.getMethod(), new_request_data.getUrl(), reflected]) # DEBUG
