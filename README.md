@@ -20,3 +20,5 @@ For each request with parameters, the plugin:
 - ✅ Avoids duplicate testing
 - ✅ Side-by-side request/response view
 - ✅ Clean UI with statistics and filtering
+
+<img width="3456" height="2168" alt="image" src="https://github.com/user-attachments/assets/74a70497-4059-4569-aab8-2951ce44e594" />
