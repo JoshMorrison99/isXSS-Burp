@@ -1,5 +1,22 @@
 # isXSS-Burp
-Burp extension used to find reflected html characters in parameters. This plugin works by sending an altered request in the background with the parameter values replaced with the value `xxxx1'xxxx2"xxxx3>xxxx4<`. The plugin will then search for the values in the response to check which html characters are being encoded.
-> Note: The request will only be sent to isXSS if the request is in-scope.
 
-![image](https://user-images.githubusercontent.com/25315255/229309547-a7fa8fc3-9d11-4948-9e65-e888a6a20ea6.png)
+A Burp Suite extension that automatically detects reflected XSS vulnerabilities by testing which special characters are reflected in responses.
+
+## How it works
+
+For each request with parameters, the plugin:
+1. Replaces parameter values with `ggg2"ggg3>ggg4<`
+2. Sends the modified request in the background
+3. Checks which characters (`"`, `>`, `<`) are reflected unencoded
+4. Detects dangerous DOM sinks (href, onclick, script contexts, etc.)
+5. Reports findings with request/response viewers
+
+## Features
+
+- ✅ Tests GET and POST requests
+- ✅ Detects reflected characters: `"`, `>`, `<`
+- ✅ Identifies DOM XSS sinks (href, event handlers, script contexts, etc.)
+- ✅ Checks response headers for reflections
+- ✅ Avoids duplicate testing
+- ✅ Side-by-side request/response view
+- ✅ Clean UI with statistics and filtering
