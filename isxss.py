@@ -1,5 +1,6 @@
 from burp import IBurpExtender, IHttpListener, ITab, IMessageEditorController, IHttpRequestResponse, IHttpService, IParameter
 from javax.swing import JFrame, JPanel, JTable, JScrollPane, JTextArea, table, BoxLayout, JTabbedPane, JSplitPane, JLabel, JButton, SwingUtilities
+from javax.swing.table import DefaultTableCellRenderer
 from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font
 from java.awt.event import MouseAdapter, KeyEvent, KeyAdapter, ActionListener
 from java.lang import Runnable
@@ -47,6 +48,24 @@ class ClearButtonListener(ActionListener):
     def actionPerformed(self, e):
         self.extender.clearResults()
 
+class TooltipRenderer(DefaultTableCellRenderer):
+    def __init__(self, extender):
+        DefaultTableCellRenderer.__init__(self)
+        self.extender = extender
+
+    def getTableCellRendererComponent(self, tbl, value, isSelected, hasFocus, row, column):
+        component = DefaultTableCellRenderer.getTableCellRendererComponent(self, tbl, value, isSelected, hasFocus, row, column)
+        try:
+            model_row = tbl.convertRowIndexToModel(row)
+            if model_row < len(self.extender.data_tooltips) and self.extender.data_tooltips[model_row]:
+                component.setToolTipText(self.extender.data_tooltips[model_row])
+            else:
+                component.setToolTipText(None)
+        except Exception:
+            component.setToolTipText(None)
+        return component
+
+
 class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController, IHttpService, IHttpRequestResponse):
     
     def __init__(self):
@@ -65,6 +84,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.stats_label = None
         self.tested_urls = set()   # Track tested original URLs to avoid re-testing
         self.reported_urls = set()  # Track tested payload URLs to avoid duplicate findings
+        self.data_tooltips = []     # Per-row tooltip text (None if no tooltip)
 
     def getTabCaption(self):
         return "isXSS"
@@ -110,6 +130,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
             self.myTable.columnModel.getColumn(3).preferredWidth = 150
             self.myTable.columnModel.getColumn(3).setMaxWidth(200)
 
+            tooltip_renderer = TooltipRenderer(self)
+            for i in range(4):
+                self.myTable.columnModel.getColumn(i).setCellRenderer(tooltip_renderer)
+
             scrollPane = JScrollPane(self.myTable)
             panel_table.add(scrollPane, BorderLayout.CENTER)
 
@@ -136,6 +160,9 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.myTable.columnModel.getColumn(2).preferredWidth = 500
         self.myTable.columnModel.getColumn(3).preferredWidth = 150
         self.myTable.columnModel.getColumn(3).setMaxWidth(200)
+        tooltip_renderer = TooltipRenderer(self)
+        for i in range(4):
+            self.myTable.columnModel.getColumn(i).setCellRenderer(tooltip_renderer)
         # Update statistics
         if hasattr(self, 'stats_label'):
             self.stats_label.setText("Findings: " + str(len(self.data)))
@@ -146,6 +173,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.data_responses = []
         self.tested_urls = set()
         self.reported_urls = set()
+        self.data_tooltips = []
         self.id = 0
         self.updateTable()
         self._requestViewer.setMessage(None, True)
@@ -286,11 +314,9 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                         
                     response_data = self._helpers.analyzeResponse(response)
 
-                    # Skip JSON responses - reflected payload in JSON is not exploitable XSS
-                    resp_headers_list = response_data.getHeaders()
-                    is_json = any("application/json" in h.lower() for h in resp_headers_list if h.lower().startswith("content-type"))
-                    if is_json:
-                        continue
+                    # Check if response is JSON
+                    resp_headers_for_ct = response_data.getHeaders()
+                    is_json = any("application/json" in h.lower() for h in resp_headers_for_ct if ":" in h and h.lower().split(":", 1)[0].strip() == "content-type")
 
                     # Find response body and check if payload is reflected
                     response_body = response[response_data.getBodyOffset():]
@@ -403,11 +429,17 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                             if header_reflection and not reflected:
                                 reflected_parts.append("(header only)")
                             
+                            if is_json:
+                                reflected_parts.append("[JSON]")
                             reflected_str = " ".join(reflected_parts) if reflected_parts else "(detected)"
-                            self.data.append([self.id, new_request_data.getMethod(), str(new_request_data.getUrl()), reflected_str]) 
-                            self.id = self.id + 1 
-                            self.data_requests.append(modified_request) 
-                            self.data_responses.append(response) 
+                            row_tooltip = None
+                            if is_json:
+                                row_tooltip = "Content-Type: application/json is not vulnerable to XSS. Try to make the website render Content-Type: text/html"
+                            self.data.append([self.id, new_request_data.getMethod(), str(new_request_data.getUrl()), reflected_str])
+                            self.data_tooltips.append(row_tooltip)
+                            self.id = self.id + 1
+                            self.data_requests.append(modified_request)
+                            self.data_responses.append(response)
 
                             # Update the JTable after updating the data
                             self.updateTable()
