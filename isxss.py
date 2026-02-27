@@ -4,6 +4,7 @@ from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font
 from java.awt.event import MouseAdapter, KeyEvent, KeyAdapter, ActionListener
 from java.lang import Runnable
 from java.net import URL
+from urllib import quote
 
 
 class MyMouseListener(MouseAdapter):
@@ -62,7 +63,8 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self._responseViewer = None
         self.editor_panel = JPanel(BorderLayout())
         self.stats_label = None
-        self.tested_urls = set()  # Track tested URLs to avoid duplicates
+        self.tested_urls = set()   # Track tested original URLs to avoid re-testing
+        self.reported_urls = set()  # Track tested payload URLs to avoid duplicate findings
 
     def getTabCaption(self):
         return "isXSS"
@@ -143,6 +145,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
         self.data_requests = []
         self.data_responses = []
         self.tested_urls = set()
+        self.reported_urls = set()
         self.id = 0
         self.updateTable()
         self._requestViewer.setMessage(None, True)
@@ -207,35 +210,69 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                 
                 # Loop over the parameters and modify as necessary
                 for parameter in parameters:
-                    if('ggg' in parameter.getValue()):
+                    # Skip cookie parameters - they should not be injected into the URL/body
+                    if parameter.getType() == IParameter.PARAM_COOKIE:
+                        continue
+                    if('ggg2"ggg3>ggg4<' in parameter.getValue()):
                         return
                     new_value = "ggg2\"ggg3>ggg4<"
                     new_parameter = self._helpers.buildParameter(parameter.getName(), new_value, parameter.getType())
                     new_parameters.append(new_parameter)
 
-                modified_request = None
+                if not new_parameters:
+                    return
+
+                requests_to_test = []
                 
                 # Handle GET requests
                 if method == "GET":
-                    # Create a new query string with the new parameters
-                    new_query = '&'.join([p.getName() + '=' + p.getValue() for p in new_parameters])
-                    # Replace the query string in the URL with the new query string
-                    new_url = url.getProtocol() + "://" + url.getHost() + ":" + str(url.getPort()) + url.getPath() + "?" + new_query
+                    # Helper: rebuild the request reusing original headers (preserves Cookie etc.)
+                    # Only the first header (request line) is replaced with the new path+query.
+                    def build_get_request(path_and_query):
+                        new_headers = list(headers)
+                        new_headers[0] = method + " " + path_and_query + " HTTP/1.1"
+                        return self._helpers.buildHttpMessage(new_headers, None)
+
+                    # Standard request: replace all param values with payload
+                    new_query = '&'.join([p.getName() + '=' + quote(p.getValue(), safe='=') for p in new_parameters])
+                    path_query = url.getPath() + "?" + new_query
                     if url.getRef():
-                        new_url += "#" + url.getRef()
-                    modified_request = self._helpers.buildHttpRequest(URL(new_url))
+                        path_query += "#" + url.getRef()
+                    requests_to_test.append(build_get_request(path_query))
+                    
+                    # Nested value requests: for params whose value contains '=',
+                    # also test with only the sub-value replaced (e.g. setck=cplng=payload)
+                    for orig_param in parameters:
+                        if orig_param.getType() == IParameter.PARAM_COOKIE:
+                            continue
+                        orig_value = orig_param.getValue()
+                        if '=' in orig_value:
+                            eq_idx = orig_value.index('=')
+                            nested_new_value = orig_value[:eq_idx + 1] + 'ggg2"ggg3>ggg4<'
+                            variant_params = []
+                            for p in new_parameters:
+                                if p.getName() == orig_param.getName():
+                                    variant_params.append(self._helpers.buildParameter(p.getName(), nested_new_value, p.getType()))
+                                else:
+                                    variant_params.append(p)
+                            variant_query = '&'.join([p.getName() + '=' + quote(p.getValue(), safe='=') for p in variant_params])
+                            variant_path_query = url.getPath() + "?" + variant_query
+                            if url.getRef():
+                                variant_path_query += "#" + url.getRef()
+                            requests_to_test.append(build_get_request(variant_path_query))
                 
                 # Handle POST requests
                 elif method == "POST":
                     modified_request = request[:]
                     for param in new_parameters:
                         modified_request = self._helpers.updateParameter(modified_request, param)
+                    requests_to_test.append(modified_request)
                 
                 else:
                     # Unsupported method
                     return
                 
-                if modified_request:
+                for modified_request in requests_to_test:
                     new_request = self._callbacks.makeHttpRequest(messageInfo.getHttpService(), modified_request)
                     new_request_data = self._helpers.analyzeRequest(new_request)
                         
@@ -245,9 +282,15 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                     response = new_request.getResponse()
                     if not response:
                         # Silent fail - no need to spam console for network issues
-                        return
+                        continue
                         
                     response_data = self._helpers.analyzeResponse(response)
+
+                    # Skip JSON responses - reflected payload in JSON is not exploitable XSS
+                    resp_headers_list = response_data.getHeaders()
+                    is_json = any("application/json" in h.lower() for h in resp_headers_list if h.lower().startswith("content-type"))
+                    if is_json:
+                        continue
 
                     # Find response body and check if payload is reflected
                     response_body = response[response_data.getBodyOffset():]
@@ -311,27 +354,52 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab, IMessageEditorController,
                         if re.search(r'<form[^>]+action\s*=\s*["\']?\s*ggg', response_body_str, re.IGNORECASE):
                             dom_sinks.append("form-action")
                         
-                        # Check response headers for reflections
+                        # Check response headers for reflections (unencoded chars only)
                         response_headers = response_data.getHeaders()
                         header_reflection = False
+                        cookie_reflection = False
                         for header in response_headers:
                             if "ggg" in header:
-                                header_reflection = True
-                                if "ggg2\"" in header and "\"" not in reflected:
-                                    reflected.append("\"")
-                                if "ggg3>" in header and ">" not in reflected:
-                                    reflected.append(">")
-                                if "ggg4<" in header and "<" not in reflected:
-                                    reflected.append("<")
-                                break
+                                header_lower = header.lower()
+                                is_set_cookie = header_lower.startswith("set-cookie:")
+                                if is_set_cookie:
+                                    cookie_reflection = True
+                                    if "ggg2\"" in header:
+                                        if "\"" not in reflected:
+                                            reflected.append("\"")
+                                    if "ggg3>" in header:
+                                        if ">" not in reflected:
+                                            reflected.append(">")
+                                    if "ggg4<" in header:
+                                        if "<" not in reflected:
+                                            reflected.append("<")
+                                else:
+                                    if "ggg2\"" in header:
+                                        header_reflection = True
+                                        if "\"" not in reflected:
+                                            reflected.append("\"")
+                                    if "ggg3>" in header:
+                                        header_reflection = True
+                                        if ">" not in reflected:
+                                            reflected.append(">")
+                                    if "ggg4<" in header:
+                                        header_reflection = True
+                                        if "<" not in reflected:
+                                            reflected.append("<")
                         
-                        if reflected or header_reflection or dom_sinks:
+                        tested_url_str = str(new_request_data.getUrl())
+                        if reflected or header_reflection or cookie_reflection or dom_sinks:
+                            if tested_url_str in self.reported_urls:
+                                continue
+                            self.reported_urls.add(tested_url_str)
                             # Format the reflected characters nicely
                             reflected_parts = []
                             if reflected:
                                 reflected_parts.append(", ".join(reflected))
                             if dom_sinks:
                                 reflected_parts.append("[DOM:" + ",".join(dom_sinks) + "]")
+                            if cookie_reflection:
+                                reflected_parts.append("[Set-Cookie]")
                             if header_reflection and not reflected:
                                 reflected_parts.append("(header only)")
                             
