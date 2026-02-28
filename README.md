@@ -18,7 +18,11 @@ For each request with parameters, the plugin:
 - ✅ Identifies DOM XSS sinks (href, event handlers, script contexts, etc.)
 - ✅ Checks response headers for reflections
 - ✅ Avoids duplicate testing
+- ✅ Avoids injecting none important requests such as googletagmanager.com, google.com
 - ✅ Side-by-side request/response view
 - ✅ Clean UI with statistics and filtering
 
 <img width="3456" height="2168" alt="image" src="https://github.com/user-attachments/assets/74a70497-4059-4569-aab8-2951ce44e594" />
+
+## TODO
+- Implement feature to inject into JSON values - https://x.com/onetestfr/status/1917291152971125147
